@@ -1,65 +1,99 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
-import { GoogleGenAI } from "@google/genai";
+import { NextRequest, NextResponse } from "next/server";
+import { GoogleGenAI, Type } from "@google/genai";
 
-// Khởi tạo instance với API Key từ biến môi trường
-// GoogleGenAI expects an options object; provide the apiKey field
-const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
+export const runtime = "nodejs";
 
-export async function POST(req: Request) {
+interface AIResult {
+  vendor_id: string;
+  ext_inv_no: string;
+  total_amount: string;
+}
+
+interface RequestBody {
+  file_data?: string;
+}
+
+export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
+    const apiKey = process.env.GEMINI_API_KEY;
+
+    if (!apiKey) {
+      return NextResponse.json(
+        { error: "Missing GEMINI_API_KEY in .env.local" },
+        { status: 500 },
+      );
+    }
+
+    const body = (await req.json()) as RequestBody;
     const { file_data } = body;
 
     if (!file_data) {
-      return new Response(
-        JSON.stringify({ error: "Không tìm thấy dữ liệu file trong request" }),
+      return NextResponse.json(
+        { error: "Khong tim thay du lieu file" },
         { status: 400 },
       );
     }
 
-    const prompt = `Bạn là chuyên gia bóc tách hóa đơn. Hãy đọc file PDF đính kèm và trích xuất thông tin.
-      Yêu cầu trả về định dạng JSON thuần túy, không có ký hiệu markdown, không giải thích gì thêm:
-      {
-        "vendor_id": "Mã nhà cung cấp hoặc mã số thuế",
-        "ext_inv_no": "Số hóa đơn",
-        "total_amount": "Tổng tiền thanh toán (chỉ lấy số, ví dụ: 1500.00)"
-      }`;
+    const ai = new GoogleGenAI({ apiKey });
+    const base64Pdf = file_data.replace(/^data:application\/pdf;base64,/, "");
 
-    // Gọi AI bóc tách nội dung
-    const result = await genAI.models.generateContent({
-      model: "gemini-1.5-flash",
+    const response = await ai.models.generateContent({
+      model: "gemini-2.0-flash",
       contents: [
         {
           role: "user",
           parts: [
-            { text: prompt },
+            {
+              text:
+                "Ban la tro ly ke toan. Hay trich xuat thong tin tu PDF hoa don " +
+                "va chi tra ve JSON dung schema, khong kem markdown hay giai thich.",
+            },
             {
               inlineData: {
-                data: file_data,
+                data: base64Pdf,
                 mimeType: "application/pdf",
               },
             },
           ],
         },
       ],
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            vendor_id: { type: Type.STRING },
+            ext_inv_no: { type: Type.STRING },
+            total_amount: { type: Type.STRING },
+          },
+          required: ["vendor_id", "ext_inv_no", "total_amount"],
+          propertyOrdering: ["vendor_id", "ext_inv_no", "total_amount"],
+        },
+      },
     });
 
-    const aiText = (result.text || "")
+    let text = response.text ?? "";
+
+    text = text
       .replace(/```json/g, "")
       .replace(/```/g, "")
       .trim();
 
-    return new Response(aiText, {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
-    });
-  } catch (error: any) {
-    console.error("Lỗi xử lý API:", error);
-    // Trả về chi tiết lỗi để hiển thị lên popup SAP giúp dễ debug
-    const errorMessage = error.message || "Lỗi không xác định tại Next.js";
-    return new Response(JSON.stringify({ error: errorMessage }), {
-      status: 500,
-      headers: { "Content-Type": "application/json" },
-    });
+    try {
+      const jsonParsed = JSON.parse(text) as AIResult;
+      return NextResponse.json(jsonParsed, { status: 200 });
+    } catch (parseError) {
+      console.error("JSON Parse Error:", parseError);
+      return NextResponse.json(
+        { error: "AI tra ve sai dinh dang JSON", detail: text },
+        { status: 500 },
+      );
+    }
+  } catch (error: unknown) {
+    const errorMessage =
+      error instanceof Error ? error.message : "Internal Server Error";
+    console.error("API Route Error:", errorMessage);
+
+    return NextResponse.json({ error: errorMessage }, { status: 500 });
   }
 }
