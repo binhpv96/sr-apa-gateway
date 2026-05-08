@@ -1,48 +1,67 @@
-import { NextResponse } from "next/server";
+import { GoogleGenAI } from "@google/genai";
 
-// 1. Chuẩn bị sẵn một từ điển Mock Data ánh xạ theo tên file
-const mockDatabase: Record<string, any> = {
-  "HoaDon_Samsung.pdf": {
-    vendor_id: "V_SAMSUNG",
-    ext_inv_no: "SS-2026-001",
-    total_amount: "5400.00",
-  },
-  "Apple_Invoice.pdf": {
-    vendor_id: "V_APPLE",
-    ext_inv_no: "APL-MAC-99",
-    total_amount: "9999.99",
-  },
-  "Grab_Receipt.pdf": {
-    vendor_id: "V_GRAB_VN",
-    ext_inv_no: "GRB-RIDE-01",
-    total_amount: "15.50",
-  },
-  // Data mặc định nếu người dùng upload một file không có trong danh sách trên
-  default: {
-    vendor_id: "V_UNKNOWN",
-    ext_inv_no: "INV-DEMO-000",
-    total_amount: "100.00",
-  },
-};
+// Khởi tạo Gemini với API Key của bạn (Nên để trong file .env khi đẩy lên Vercel)
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
-export async function POST(request: Request) {
+export async function POST(req) {
   try {
-    const body = await request.json();
-    const uploadedFilename = body.filename;
+    // 1. Nhận dữ liệu từ SAP gửi lên
+    const body = await req.json();
+    const { filename, file_data } = body;
 
-    console.log("Đã nhận file từ SAP:", uploadedFilename);
+    if (!file_data) {
+      return new Response(JSON.stringify({ error: "Không có dữ liệu file" }), {
+        status: 400,
+      });
+    }
 
-    // 2. Giả lập delay 2 giây cho giống AI đang "suy nghĩ"
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    // 2. Chuẩn bị prompt yêu cầu AI bóc tách
+    const prompt = `
+      Bạn là một trợ lý kế toán chuyên nghiệp. Hãy đọc hóa đơn PDF đính kèm và trích xuất các thông tin sau:
+      1. vendor_id: Mã nhà cung cấp (Nếu không rõ, hãy tự tạo một mã bắt đầu bằng V_, ví dụ: V_SAMSUNG).
+      2. ext_inv_no: Số hóa đơn (Invoice Number).
+      3. total_amount: Tổng số tiền (Chỉ lấy con số, không lấy chữ, ví dụ: 2500.00).
+      
+      TRẢ VỀ ĐÚNG ĐỊNH DẠNG JSON SAU, KHÔNG THÊM BẤT KỲ CHỮ NÀO KHÁC:
+      {
+        "vendor_id": "...",
+        "ext_inv_no": "...",
+        "total_amount": "..."
+      }
+    `;
 
-    // 3. Tìm data tương ứng với tên file. Nếu không có, dùng default.
-    // Lưu ý: Dùng fallback an toàn đề phòng body gửi lên không có filename
-    const responseData =
-      mockDatabase[uploadedFilename] || mockDatabase["default"];
+    // 3. Gọi Gemini API (Gửi kèm prompt và file PDF dưới dạng Base64)
+    const response = await ai.models.generateContent({
+      model: "gemini-1.5-flash",
+      contents: [
+        prompt,
+        {
+          inlineData: {
+            data: file_data,
+            mimeType: "application/pdf",
+          },
+        },
+      ],
+    });
 
-    return NextResponse.json(responseData);
+    // 4. Xử lý kết quả trả về (Lọc bỏ các ký tự thừa nếu AI trả về markdown ```json)
+    let aiText = response.text;
+    aiText = aiText
+      .replace(/```json/g, "")
+      .replace(/```/g, "")
+      .trim();
+
+    const jsonResult = JSON.parse(aiText);
+
+    // 5. Trả về cho hệ thống SAP
+    return new Response(JSON.stringify(jsonResult), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
   } catch (error) {
-    console.error("Lỗi Gateway:", error);
-    return NextResponse.json({ error: "Lỗi Gateway" }, { status: 500 });
+    console.error("Lỗi xử lý:", error);
+    return new Response(JSON.stringify({ error: "Lỗi nội bộ server" }), {
+      status: 500,
+    });
   }
 }
