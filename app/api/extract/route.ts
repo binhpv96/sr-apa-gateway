@@ -1,9 +1,10 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { GoogleGenAI } from "@google/genai";
 
 // Khởi tạo Gemini với API Key của bạn (Nên để trong file .env khi đẩy lên Vercel)
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
-export async function POST(req) {
+export async function POST(req: { json: () => any }) {
   try {
     // 1. Nhận dữ liệu từ SAP gửi lên
     const body = await req.json();
@@ -45,7 +46,7 @@ export async function POST(req) {
     });
 
     // 4. Xử lý kết quả trả về (Lọc bỏ các ký tự thừa nếu AI trả về markdown ```json)
-    let aiText = response.text;
+    let aiText = response.text || "";
     aiText = aiText
       .replace(/```json/g, "")
       .replace(/```/g, "")
