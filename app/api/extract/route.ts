@@ -60,9 +60,19 @@ export async function POST(req: { json: () => any }) {
       headers: { "Content-Type": "application/json" },
     });
   } catch (error) {
-    console.error("Lỗi xử lý:", error);
-    return new Response(JSON.stringify({ error: "Lỗi nội bộ server" }), {
+    console.error("Lỗi AI Extract:", error);
+
+    // ÉP NEXT.JS TRẢ VỀ LỖI THẬT CỦA HỆ THỐNG THAY VÌ CÂU CHUNG CHUNG
+    const realErrorMessage =
+      error instanceof Error
+        ? error.message
+        : typeof error === "string"
+          ? error
+          : "Lỗi không xác định";
+
+    return new Response(JSON.stringify({ error: realErrorMessage }), {
       status: 500,
+      headers: { "Content-Type": "application/json" },
     });
   }
 }
