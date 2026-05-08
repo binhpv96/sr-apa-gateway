@@ -38,7 +38,7 @@ export async function POST(req: NextRequest) {
     const base64Pdf = file_data.replace(/^data:application\/pdf;base64,/, "");
 
     const response = await ai.models.generateContent({
-      model: "gemini-2.0-flash",
+      model: "gemini-1.5-flash",
       contents: [
         {
           role: "user",
